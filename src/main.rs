@@ -2,20 +2,25 @@ mod ai;
 mod settings;
 
 use anyhow::anyhow;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::env;
 
 use ai::client::GroqClient;
 use ai::models::Message;
 use commands::git;
 
+#[derive(Debug, Subcommand)]
+enum Commands {
+    /// Commit the changes with the generated message
+    Commit { dry_run: bool },
+    /// Update configuration
+    Configure,
+}
+
 #[derive(Parser, Debug)]
 struct Args {
     #[clap(short, long, default_value_t = false)]
     pub version: bool,
-
-    #[clap(short, long, default_value_t = false)]
-    pub commit: bool,
 
     /// Commit message subject, if not provided, ai will generate one
     #[clap(short, long)]
@@ -25,8 +30,8 @@ struct Args {
     #[clap(short, long)]
     pub model: Option<String>,
 
-    #[clap(long, default_value_t = false)]
-    pub config: bool,
+    #[command(subcommand)]
+    command: Commands,
 }
 
 #[tokio::main]
@@ -40,29 +45,28 @@ async fn main() -> anyhow::Result<()> {
 
     let conf = settings::parse().await?;
 
-    if args.config {
-        let defaults = settings::Settings {
-            apikey: Some(conf.get_string("apikey")?),
-            model: Some(conf.get_string("model")?),
-        };
+    match args.command {
+        Commands::Configure => {
+            let defaults = settings::Settings {
+                apikey: Some(conf.get_string("apikey")?),
+                model: Some(conf.get_string("model")?),
+            };
 
-        settings::configure(defaults).await?;
+            settings::configure(defaults).await?;
+        }
+        Commands::Commit { dry_run } => {
+            let model = args.model.unwrap_or(conf.get_string("model")?);
+            let subject = args.subject.unwrap_or_else(|| "--".to_string());
 
-        return Ok(());
-    }
+            if !settings::validate_model(conf.get_string("apikey")?, model.clone()).await? {
+                return Err(anyhow!("Invalid model, please provide a valid model"));
+            }
 
-    let model = args.model.unwrap_or(conf.get_string("model")?);
-    let subject = args.subject.unwrap_or_else(|| "--".to_string());
+            let apikey = conf.get_string("apikey")?;
+            let client = GroqClient::new(&apikey);
 
-    if !settings::validate_model(conf.get_string("apikey")?, model.clone()).await? {
-        return Err(anyhow!("Invalid model, please provide a valid model"));
-    }
-
-    let apikey = conf.get_string("apikey")?;
-    let client = GroqClient::new(&apikey);
-
-    let system_message = Message::system(&format!(
-        r#"
+            let system_message = Message::system(&format!(
+                r#"
 [[GENERAL BEAHVIOR]]
 You are an AI Assistant that’s an expert at creating commit messages. Review the below diff that you receive. 
 
@@ -106,25 +110,28 @@ Additional types are not mandated by the Conventional Commits specification, and
 [[CONTEXT]]
 - Subject: {subject}
 "#
-    ));
+            ));
 
-    let diff = git::diff_staged().await?;
+            let diff = git::diff_staged().await?;
 
-    if diff.is_empty() {
-        return Err(anyhow!("No changes to commit"));
+            if diff.is_empty() {
+                return Err(anyhow!("No changes to commit"));
+            }
+
+            let commit_message = client
+                .create_chat_completion(model, vec![system_message, Message::user(&diff)])
+                .await
+                .map(|r| r.choices.first().map(|c| c.message.content.clone()))?
+                .ok_or(anyhow!("Invalid response from AI"))?;
+
+            if dry_run {
+                println!("{}", commit_message);
+                return Ok(());
+            }
+
+            git::commit_staged(&commit_message).await?;
+        }
     }
-
-    let commit_message = client
-        .create_chat_completion(model, vec![system_message, Message::user(&diff)])
-        .await
-        .map(|r| r.choices.first().map(|c| c.message.content.clone()))?
-        .ok_or(anyhow!("Invalid response from AI"))?;
-
-    if args.commit {
-        return git::commit_staged(&commit_message).await;
-    }
-
-    println!("{}", commit_message);
 
     Ok(())
 }
