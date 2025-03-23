@@ -83,6 +83,3 @@ ai-commit configure
 ai-commit -v
 ```
 
-## Commit Message Format
-
-The 
