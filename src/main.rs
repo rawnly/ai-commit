@@ -3,7 +3,6 @@ mod settings;
 
 use anyhow::anyhow;
 use clap::{Parser, Subcommand};
-use std::env;
 
 use ai::client::GroqClient;
 use ai::models::Message;
@@ -15,7 +14,11 @@ enum Commands {
     Configure,
 
     /// Commit the changes with the generated message
-    Commit { 
+    Commit {
+        /// Add the changes to the staging area
+        #[clap(long, short, default_value_t = false)]
+        add: bool,
+
         /// Print only the commit message without committing
         #[clap(long, default_value_t = false)]
         dry_run: bool,
@@ -25,11 +28,12 @@ enum Commands {
         subject: Option<String>,
 
         /// Commit message to be improved
-        message: Option<String>
+        message: Option<String>,
     },
 }
 
 #[derive(Parser, Debug)]
+#[command(version, propagate_version = true, about, long_about = None)]
 struct Args {
     /// ai model to use view more at https://console.groq.com/docs/models
     #[clap(short, global = true, long)]
@@ -41,8 +45,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args = Args::try_parse()?;
-
+    let args = Args::parse();
     let conf = settings::parse().await?;
 
     match args.command {
@@ -54,7 +57,12 @@ async fn main() -> anyhow::Result<()> {
 
             settings::configure(defaults).await?;
         }
-        Commands::Commit { dry_run , message,subject} => {
+        Commands::Commit {
+            dry_run,
+            add,
+            message,
+            subject,
+        } => {
             let model = args.model.unwrap_or(conf.get_string("model")?);
             let subject = subject.unwrap_or_else(|| "--".to_string());
 
@@ -65,15 +73,25 @@ async fn main() -> anyhow::Result<()> {
             let apikey = conf.get_string("apikey")?;
             let client = GroqClient::new(&apikey);
 
+            let diff_staged = git::diff_staged().await?;
+            let diff_unstaged = git::diff_unstaged().await?;
 
-            let diff = git::diff_staged().await?;
+            let diff = if add {
+                format!("{}\n\n{}", diff_staged, diff_unstaged)
+            } else {
+                diff_staged
+            };
 
             if diff.is_empty() {
                 return Err(anyhow!("No changes to commit"));
             }
 
             let messages = match message {
-                Some(msg) => vec![improve_commit_message(), Message::user(&diff), Message::user(&msg)],
+                Some(msg) => vec![
+                    improve_commit_message(),
+                    Message::user(&diff),
+                    Message::user(&msg),
+                ],
                 None => vec![generate_commit_message(&subject), Message::user(&diff)],
             };
 
@@ -83,13 +101,12 @@ async fn main() -> anyhow::Result<()> {
                 .map(|r| r.choices.first().map(|c| c.message.content.clone()))?
                 .ok_or(anyhow!("Invalid response from AI"))?;
 
-
             if dry_run {
                 println!("{}", commit_message.trim());
                 return Ok(());
             }
 
-            git::commit_staged(&commit_message.trim()).await?;
+            git::commit_staged(commit_message.trim(), add).await?;
         }
     }
 
@@ -97,8 +114,8 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn generate_commit_message(subject: &str) -> Message {
-    return Message::system(&format!(
-                r#"
+    Message::system(&format!(
+        r#"
 [[GENERAL BEAHVIOR]]
 You are an AI Assistant that’s an expert at creating commit messages. Review the below diff that you receive. 
 
@@ -142,13 +159,12 @@ Additional types are not mandated by the Conventional Commits specification, and
 [[CONTEXT]]
 - Subject: {subject}
 "#
-            ));
+    ))
 }
 
 fn improve_commit_message() -> Message {
-
-    return Message::system(
-                r#"
+    Message::system(
+        r#"
 [[GENERAL BEAHVIOR]]
 You are an AI Assistant that’s an expert at creating commit messages. Review the below diff and commit message that you receive, and improve the commit message.
 
@@ -188,5 +204,6 @@ BREAKING CHANGE: a commit that has a footer BREAKING CHANGE:, or appends a ! aft
 types other than fix: and feat: are allowed, for example @commitlint/config-conventional (based on the Angular convention) recommends build:, chore:, ci:, docs:, style:, refactor:, perf:, test:, and others.
 footers other than BREAKING CHANGE: <description> may be provided and follow a convention similar to git trailer format.
 Additional types are not mandated by the Conventional Commits specification, and have no implicit effect in Semantic Versioning (unless they include a BREAKING CHANGE). A scope may be provided to a commit’s type, to provide additional contextual information and is contained within parenthesis, e.g., feat(parser): add ability to parse arrays.
-"#);
+"#,
+    )
 }
