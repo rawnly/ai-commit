@@ -11,23 +11,28 @@ use commands::git;
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Commit the changes with the generated message
-    Commit { dry_run: bool },
     /// Update configuration
     Configure,
+
+    /// Commit the changes with the generated message
+    Commit { 
+        /// Print only the commit message without committing
+        #[clap(long, default_value_t = false)]
+        dry_run: bool,
+
+        /// Commit message subject, if not provided, ai will generate one
+        #[clap(short, long)]
+        subject: Option<String>,
+
+        /// Commit message to be improved
+        message: Option<String>
+    },
 }
 
 #[derive(Parser, Debug)]
 struct Args {
-    #[clap(short, long, default_value_t = false)]
-    pub version: bool,
-
-    /// Commit message subject, if not provided, ai will generate one
-    #[clap(short, long)]
-    pub subject: Option<String>,
-
     /// ai model to use view more at https://console.groq.com/docs/models
-    #[clap(short, long)]
+    #[clap(short, global = true, long)]
     pub model: Option<String>,
 
     #[command(subcommand)]
@@ -37,11 +42,6 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::try_parse()?;
-
-    if args.version {
-        println!(env!("CARGO_PKG_VERSION"));
-        return Ok(());
-    }
 
     let conf = settings::parse().await?;
 
@@ -54,9 +54,9 @@ async fn main() -> anyhow::Result<()> {
 
             settings::configure(defaults).await?;
         }
-        Commands::Commit { dry_run } => {
+        Commands::Commit { dry_run , message,subject} => {
             let model = args.model.unwrap_or(conf.get_string("model")?);
-            let subject = args.subject.unwrap_or_else(|| "--".to_string());
+            let subject = subject.unwrap_or_else(|| "--".to_string());
 
             if !settings::validate_model(conf.get_string("apikey")?, model.clone()).await? {
                 return Err(anyhow!("Invalid model, please provide a valid model"));
@@ -65,7 +65,39 @@ async fn main() -> anyhow::Result<()> {
             let apikey = conf.get_string("apikey")?;
             let client = GroqClient::new(&apikey);
 
-            let system_message = Message::system(&format!(
+
+            let diff = git::diff_staged().await?;
+
+            if diff.is_empty() {
+                return Err(anyhow!("No changes to commit"));
+            }
+
+            let messages = match message {
+                Some(msg) => vec![improve_commit_message(), Message::user(&diff), Message::user(&msg)],
+                None => vec![generate_commit_message(&subject), Message::user(&diff)],
+            };
+
+            let commit_message = client
+                .create_chat_completion(model, messages)
+                .await
+                .map(|r| r.choices.first().map(|c| c.message.content.clone()))?
+                .ok_or(anyhow!("Invalid response from AI"))?;
+
+
+            if dry_run {
+                println!("{}", commit_message.trim());
+                return Ok(());
+            }
+
+            git::commit_staged(&commit_message.trim()).await?;
+        }
+    }
+
+    Ok(())
+}
+
+fn generate_commit_message(subject: &str) -> Message {
+    return Message::system(&format!(
                 r#"
 [[GENERAL BEAHVIOR]]
 You are an AI Assistant that’s an expert at creating commit messages. Review the below diff that you receive. 
@@ -111,27 +143,50 @@ Additional types are not mandated by the Conventional Commits specification, and
 - Subject: {subject}
 "#
             ));
+}
 
-            let diff = git::diff_staged().await?;
+fn improve_commit_message() -> Message {
 
-            if diff.is_empty() {
-                return Err(anyhow!("No changes to commit"));
-            }
+    return Message::system(
+                r#"
+[[GENERAL BEAHVIOR]]
+You are an AI Assistant that’s an expert at creating commit messages. Review the below diff and commit message that you receive, and improve the commit message.
 
-            let commit_message = client
-                .create_chat_completion(model, vec![system_message, Message::user(&diff)])
-                .await
-                .map(|r| r.choices.first().map(|c| c.message.content.clone()))?
-                .ok_or(anyhow!("Invalid response from AI"))?;
+Input format
+- The input format follows git diff format with addition and subtraction of code.
+- The + sign means that code has been added.
+- The - sign means that code has been removed.
 
-            if dry_run {
-                println!("{}", commit_message);
-                return Ok(());
-            }
+- Generate ONLY the commit message. 
+- Use the subject given from the user if provided, otherwise generate one.
+- Generate a single commit message for the entire diff. 
 
-            git::commit_staged(&commit_message).await?;
-        }
-    }
+[[FORMAT]]
+Use the following format:
 
-    Ok(())
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+[[EXTRA INSTRUCTIONS]]
+Skip commit description or footer if it's redudant / obvious. It should be clear from the code changes.
+Use it only if it adds value to the commit message. 
+Avoid descriptions such as "introduces X class for doing Y feature"
+
+Skip backticks and newlines in the final commit message.
+
+[[HOW TO USE]]
+The commit contains the following structural elements, to communicate intent to the consumers of your library:
+
+fix: a commit of the type fix patches a bug in your codebase (this correlates with PATCH in Semantic Versioning).
+feat: a commit of the type feat introduces a new feature to the codebase (this correlates with MINOR in Semantic Versioning).
+BREAKING CHANGE: a commit that has a footer BREAKING CHANGE:, or appends a ! after the type/scope, introduces a breaking API change (correlating with MAJOR in Semantic Versioning). A BREAKING CHANGE can be part of commits of any type.
+types other than fix: and feat: are allowed, for example @commitlint/config-conventional (based on the Angular convention) recommends build:, chore:, ci:, docs:, style:, refactor:, perf:, test:, and others.
+footers other than BREAKING CHANGE: <description> may be provided and follow a convention similar to git trailer format.
+Additional types are not mandated by the Conventional Commits specification, and have no implicit effect in Semantic Versioning (unless they include a BREAKING CHANGE). A scope may be provided to a commit’s type, to provide additional contextual information and is contained within parenthesis, e.g., feat(parser): add ability to parse arrays.
+"#);
 }
