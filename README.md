@@ -13,7 +13,7 @@ AI Commit is a command-line tool that generates conventional commit messages usi
 
 ## Prerequisites
 - Git
-- Groq API key (obtain from [Groq Console](https://console.groq.com/docs/api))
+- Groq API key (obtain from [Groq Console][groq-console])
 
 ## Installation
 
@@ -81,3 +81,4 @@ ai-commit configure
 ai-commit -v
 ```
 
+[groq-console]: https://console.groq.com/
