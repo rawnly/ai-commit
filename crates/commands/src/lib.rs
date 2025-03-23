@@ -1,5 +1,7 @@
 use std::string::FromUtf8Error;
 
+pub mod git;
+
 use thiserror::Error;
 
 #[derive(Debug, Clone, Error)]

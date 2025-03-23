@@ -3,17 +3,19 @@ mod settings;
 
 use anyhow::anyhow;
 use clap::Parser;
-use std::{env, fs};
+use std::env;
 
 use ai::client::GroqClient;
 use ai::models::Message;
-use commands::command;
-use config::Config;
+use commands::git;
 
 #[derive(Parser, Debug)]
 struct Args {
     #[clap(short, long, default_value_t = false)]
     pub version: bool,
+
+    #[clap(short, long, default_value_t = false)]
+    pub commit: bool,
 
     /// Commit message subject, if not provided, ai will generate one
     #[clap(short, long)]
@@ -25,11 +27,6 @@ struct Args {
 
     #[clap(long, default_value_t = false)]
     pub config: bool,
-}
-
-async fn git_diff() -> anyhow::Result<String> {
-    let bytes = command!("git", "diff", "--staged").output().await?.stdout;
-    Ok(String::from_utf8(bytes)?)
 }
 
 #[tokio::main]
@@ -111,20 +108,23 @@ Additional types are not mandated by the Conventional Commits specification, and
 "#
     ));
 
-    let diff = git_diff().await?;
+    let diff = git::diff_staged().await?;
 
     if diff.is_empty() {
         return Err(anyhow!("No changes to commit"));
     }
 
-    let response = client
+    let commit_message = client
         .create_chat_completion(model, vec![system_message, Message::user(&diff)])
-        .await?;
+        .await
+        .map(|r| r.choices.first().map(|c| c.message.content.clone()))?
+        .ok_or(anyhow!("Invalid response from AI"))?;
 
-    println!(
-        "{}",
-        response.choices.first().unwrap().message.content.trim()
-    );
+    if args.commit {
+        return git::commit_staged(&commit_message).await;
+    }
+
+    println!("{}", commit_message);
 
     Ok(())
 }
