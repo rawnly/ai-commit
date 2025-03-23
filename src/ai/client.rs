@@ -3,7 +3,7 @@ use reqwest::{
     header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue},
 };
 
-use super::models::{ChatRequest, ChatResponse, Message};
+use super::models::{ChatRequest, ChatResponse, List, Message, Model};
 
 #[derive(Debug, Clone)]
 pub struct GroqClient {
@@ -61,5 +61,24 @@ impl GroqClient {
             .await?;
 
         response.json::<ChatResponse>().await.map_err(|e| e.into())
+    }
+
+    pub async fn get_models(self) -> anyhow::Result<Vec<Model>> {
+        let base_url = self.clone().get_base_url();
+        let client = self.clone().client;
+
+        let url = format!("{}/openai/v1/models", base_url);
+
+        let response = client
+            .get(&url)
+            .headers(self.clone().default_headers())
+            .send()
+            .await?;
+
+        response
+            .json::<List<Model>>()
+            .await
+            .map_err(|e| e.into())
+            .map(|l| l.data)
     }
 }

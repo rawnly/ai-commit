@@ -50,3 +50,16 @@ pub struct Choice {
     pub index: u64,
     pub message: Message,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct List<T> {
+    pub object: String,
+    pub data: Vec<T>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Model {
+    pub id: String,
+    pub owned_by: String,
+    pub active: bool,
+}

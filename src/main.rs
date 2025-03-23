@@ -1,11 +1,14 @@
 mod ai;
+mod settings;
 
+use anyhow::anyhow;
 use clap::Parser;
-use std::env;
+use std::{env, fs};
 
 use ai::client::GroqClient;
 use ai::models::Message;
 use commands::command;
+use config::Config;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -19,6 +22,9 @@ struct Args {
     /// ai model to use view more at https://console.groq.com/docs/models
     #[clap(short, long)]
     pub model: Option<String>,
+
+    #[clap(long, default_value_t = false)]
+    pub config: bool,
 }
 
 async fn git_diff() -> anyhow::Result<String> {
@@ -35,17 +41,27 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let diff = git_diff().await?;
+    let conf = settings::parse().await?;
 
-    if diff.is_empty() {
-        println!("No changes to commit");
+    if args.config {
+        let defaults = settings::Settings {
+            apikey: Some(conf.get_string("apikey")?),
+            model: Some(conf.get_string("model")?),
+        };
+
+        settings::configure(defaults).await?;
+
         return Ok(());
     }
 
-    let model = args.model.unwrap_or("qwen-2.5-coder-32b".to_string());
+    let model = args.model.unwrap_or(conf.get_string("model")?);
     let subject = args.subject.unwrap_or_else(|| "--".to_string());
 
-    let apikey = env::var("AI_COMMIT_API_KEY").expect("AI_COMMIT_API_KEY is not set");
+    if !settings::validate_model(conf.get_string("apikey")?, model.clone()).await? {
+        return Err(anyhow!("Invalid model, please provide a valid model"));
+    }
+
+    let apikey = conf.get_string("apikey")?;
     let client = GroqClient::new(&apikey);
 
     let system_message = Message::system(&format!(
@@ -94,6 +110,12 @@ Additional types are not mandated by the Conventional Commits specification, and
 - Subject: {subject}
 "#
     ));
+
+    let diff = git_diff().await?;
+
+    if diff.is_empty() {
+        return Err(anyhow!("No changes to commit"));
+    }
 
     let response = client
         .create_chat_completion(model, vec![system_message, Message::user(&diff)])
