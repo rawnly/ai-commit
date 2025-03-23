@@ -12,8 +12,6 @@ AI Commit is a command-line tool that generates conventional commit messages usi
 - 📝 Support for custom commit message subjects
 
 ## Prerequisites
-
-- Rust toolchain
 - Git
 - Groq API key (obtain from [Groq Console](https://console.groq.com/docs/api))
 
