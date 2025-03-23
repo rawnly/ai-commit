@@ -1,6 +1,6 @@
 # AI Commit
 
-AI Commit is a command-line tool that generates conventional commit messages using Groq's AI models. It analyzes your staged changes and creates meaningful, standardized commit messages following conventional commit format.
+AI Commit is a command-line tool that generates conventional commit messages using [Groq's AI models][ai-models-list]. It analyzes your staged changes and creates meaningful, standardized commit messages following conventional commit format.
 
 ## Features
 
@@ -82,3 +82,4 @@ ai-commit -v
 ```
 
 [groq-console]: https://console.groq.com/
+[ai-models-list]: https://console.groq.com/docs/models
