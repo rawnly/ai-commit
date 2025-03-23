@@ -20,3 +20,6 @@ inquire = "0.7.5"
 members = [
   "./crates/commands"
 ]
+
+[build-dependencies]
+regex = "1.11.1"
