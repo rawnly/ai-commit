@@ -44,6 +44,19 @@ export AI_COMMIT_API_KEY="your_api_key"
 ```
 
 ## Usage
+```bash
+Usage: ai-commit [OPTIONS] <COMMAND>
+
+Commands:
+  configure  Update configuration
+  commit     Commit the changes with the generated message
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -m, --model <MODEL>  ai model to use view more at https://console.groq.com/docs/models
+  -h, --help           Print help
+  -V, --version        Print version
+```
 
 ### Generate and commit changes
 
@@ -73,12 +86,6 @@ ai-commit commit --model "mixtral-8x7b-32768"
 
 ```bash
 ai-commit configure
-```
-
-### Check version
-
-```bash
-ai-commit -v
 ```
 
 [groq-console]: https://console.groq.com/
