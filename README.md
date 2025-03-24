@@ -73,7 +73,7 @@ ai-commit commit --dry-run
 ### Specify a custom commit message to be improved
 
 ```bash
-ai-commit commit -s "feat: my custom subject"
+ai-commit commit "feat: my custom subject"
 ```
 
 ### Use a different AI model
